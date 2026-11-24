@@ -1,61 +1,82 @@
 import os
 import json
 import time
-import google.generativeai as genai
 from typing import List, Dict, Any, Optional
+
+from google import genai
+from google.genai import types
 
 class StudyBuddyAI:
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initializes the StudyBuddyAI service with the Gemini API.
-        Loads GEMINI_API_KEY strictly from environment variables and configures high-RPM models.
+        Initializes the StudyBuddyAI service with the official google-genai SDK.
+        Configures an explicit 20-second HTTP timeout so API calls never hang indefinitely.
         """
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not set in environment variables.")
             
-        genai.configure(api_key=self.api_key)
+        # 20-second explicit HTTP client timeout (20,000 ms)
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options=types.HttpOptions(timeout=20000)
+        )
         
-        # Default to gemini-3.1-flash-lite (or gemini-3.5-flash-lite) to maximize free-tier RPM/RPD limits
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+        # Default to gemini-2.5-flash-lite (or gemini-3.1-flash-lite if configured via env)
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
         self.lite_model_name = os.getenv("GEMINI_LITE_MODEL", self.model_name)
+        self.embedding_model = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
         
-        self.model = genai.GenerativeModel(self.model_name)
-        self.lite_model = genai.GenerativeModel(self.lite_model_name)
-        
+        print(f"[Gemini Client Initialized] Primary Model: {self.model_name}, Embedding Model: {self.embedding_model}, Timeout: 20s")
+
     def _generate_content_with_retry(
         self,
-        contents: list,
+        contents: Any,
         is_json: bool = False,
         temperature: Optional[float] = None,
-        model: Optional[Any] = None,
+        model: Optional[str] = None,
         max_retries: int = 2,
         base_delay: float = 1.5
     ) -> Optional[str]:
         """
         Helper method to handle API calls with fast, non-blocking exponential backoff (max 2 retries, total < 5s)
-        and detailed console logging so errors are crystal clear in Render logs.
+        and detailed console logging for Render logs.
         """
-        target_model = model if model else self.model
-        generation_config = {}
-        if is_json:
-            generation_config["response_mime_type"] = "application/json"
-        if temperature is not None:
-            generation_config["temperature"] = temperature
-            
-        if not generation_config:
-            generation_config = None
+        target_model = model if model else self.model_name
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json" if is_json else None,
+            temperature=temperature
+        )
+        
+        # Format inline PDF if present
+        formatted_contents = []
+        if isinstance(contents, list):
+            for item in contents:
+                if isinstance(item, dict) and "mime_type" in item and "data" in item:
+                    formatted_contents.append(types.Part.from_bytes(data=item["data"], mime_type=item["mime_type"]))
+                else:
+                    formatted_contents.append(item)
+        elif isinstance(contents, dict) and "mime_type" in contents and "data" in contents:
+            formatted_contents = [types.Part.from_bytes(data=contents["data"], mime_type=contents["mime_type"])]
+        else:
+            formatted_contents = contents
 
         for attempt in range(max_retries + 1):
+            start_time = time.time()
             try:
-                response = target_model.generate_content(
-                    contents,
-                    generation_config=generation_config
+                print(f"[Gemini API Call] Starting generation with model={target_model} (attempt {attempt + 1}/{max_retries + 1})...")
+                response = self.client.models.generate_content(
+                    model=target_model,
+                    contents=formatted_contents,
+                    config=config
                 )
+                duration = time.time() - start_time
+                print(f"[Gemini API Call] Succeeded in {duration:.2f}s with model={target_model}")
                 return response.text
             except Exception as e:
+                duration = time.time() - start_time
                 error_str = str(e)
-                print(f"[Gemini API Call Failed] Attempt {attempt + 1}/{max_retries + 1}: {type(e).__name__} - {error_str}")
+                print(f"[Gemini API Error] Attempt {attempt + 1} failed after {duration:.2f}s: {type(e).__name__} - {error_str}")
                 is_rate_limit = (
                     "429" in error_str
                     or "resource_exhausted" in error_str.lower()
@@ -65,7 +86,6 @@ class StudyBuddyAI:
                 )
                 
                 if is_rate_limit and attempt < max_retries:
-                    # Short backoff: 1.5s on attempt 0, 3.0s on attempt 1 (total < 5 seconds)
                     delay = base_delay * (2 ** attempt)
                     print(
                         f"[Gemini Rate Limit] 429 RESOURCE_EXHAUSTED. "
@@ -77,40 +97,43 @@ class StudyBuddyAI:
                     print(f"[Gemini Rate Limit] Max retries ({max_retries}) exceeded for 429 rate limit.")
                     raise Exception(f"429: API rate limit reached ({error_str[:120]}). Please wait a few seconds and try again.")
                 else:
-                    print(f"[Gemini API Unhandled Error] {type(e).__name__}: {error_str}")
+                    print(f"[Gemini API Failure] Non-retryable error: {type(e).__name__} - {error_str}")
                     raise e
 
-    def get_embedding(self, text: str, model: str = "models/text-embedding-004") -> List[float]:
+    def get_embedding(self, text: str) -> List[float]:
         """
-        Generates a single query embedding using Gemini's Embedding API.
-        Fails fast without long retries so queries can gracefully fall back to BM25 search.
+        Generates a query embedding using the official google-genai SDK and gemini-embedding-001.
         """
         try:
-            result = genai.embed_content(
-                model=model,
-                content=text,
-                task_type="retrieval_query"
+            response = self.client.models.embed_content(
+                model=self.embedding_model,
+                contents=text
             )
-            return result.get("embedding", [])
+            if hasattr(response, 'embeddings') and response.embeddings:
+                return list(response.embeddings[0].values)
+            elif hasattr(response, 'embedding') and response.embedding:
+                return list(response.embedding.values)
+            return []
         except Exception as e:
-            print(f"[Gemini Embedding Error] Failed to get query embedding: {type(e).__name__} - {e}")
+            print(f"[Gemini Embedding Error] Failed for query using {self.embedding_model}: {type(e).__name__} - {e}")
             return []
 
-    def get_chunk_embeddings(self, chunks: List[str], model: str = "models/text-embedding-004") -> List[List[float]]:
+    def get_chunk_embeddings(self, chunks: List[str]) -> List[List[float]]:
         """
-        Computes chunk embeddings ONCE during document upload.
-        Embeds chunks sequentially with fast error handling. If rate limit is hit,
-        logs warning and returns whatever was computed so the upload completes and falls back to BM25.
+        Computes chunk embeddings ONCE during document upload using gemini-embedding-001.
+        If rate limits or errors occur, returns whatever was computed so upload falls back to BM25.
         """
         embeddings = []
         for i, chunk in enumerate(chunks):
             try:
-                result = genai.embed_content(
-                    model=model,
-                    content=chunk,
-                    task_type="retrieval_document"
+                response = self.client.models.embed_content(
+                    model=self.embedding_model,
+                    contents=chunk
                 )
-                embeddings.append(result.get("embedding", []))
+                if hasattr(response, 'embeddings') and response.embeddings:
+                    embeddings.append(list(response.embeddings[0].values))
+                elif hasattr(response, 'embedding') and response.embedding:
+                    embeddings.append(list(response.embedding.values))
             except Exception as e:
                 print(f"[Gemini Chunk Embedding] Hit error on chunk {i+1}/{len(chunks)} ({type(e).__name__}: {e}). Halting embedding batch early.")
                 break
@@ -119,8 +142,7 @@ class StudyBuddyAI:
     def generate_rag_answer(self, question: str, context: Any) -> str:
         """
         Generates an answer to the user's question.
-        If context is a string (relevant chunks from RAG), uses small text prompt (~99% fewer tokens).
-        If context is an inline PDF dict, uses multimodal fallback.
+        Uses small text prompt (~99% fewer tokens) when context is a text string.
         """
         if isinstance(context, str) and context.strip():
             prompt = f"""You are a helpful, accurate AI study assistant. Your task is to answer the user's question based strictly on the provided context.
@@ -134,7 +156,7 @@ Question:
 {question}
 
 Answer:"""
-            result = self._generate_content_with_retry([prompt])
+            result = self._generate_content_with_retry(prompt)
         else:
             prompt = f"""You are a helpful AI study assistant. Your task is to answer the user's question based ONLY on the provided document.
 If the document does not contain the information needed to answer the question, state clearly that you do not have enough information to answer. Do not use outside knowledge.
@@ -150,7 +172,7 @@ Answer:"""
 
     def generate_quiz(self, document_input: Any) -> Dict[str, Any]:
         """
-        Generates a quiz derived strictly from the document (accepts either extracted text string or inline PDF dict).
+        Generates a quiz derived strictly from the document.
         """
         prompt = """You are an expert educator. Create a comprehensive quiz based strictly on the provided material.
 CRITICAL INSTRUCTION: First, silently analyze the provided material and identify all the major core concepts and themes. 
@@ -181,9 +203,8 @@ The JSON structure must exactly match this format:
 }
 """
         if isinstance(document_input, str) and document_input.strip():
-            # Pass extracted text directly in prompt, trimmed to ~12k characters to avoid token saturation
             full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:12000]}"
-            result = self._generate_content_with_retry([full_prompt], is_json=True, temperature=0.5)
+            result = self._generate_content_with_retry(full_prompt, is_json=True, temperature=0.5)
         else:
             result = self._generate_content_with_retry([document_input, prompt], is_json=True, temperature=0.5)
         
@@ -214,7 +235,7 @@ The JSON structure must exactly match this format:
 """
         if isinstance(document_input, str) and document_input.strip():
             full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:12000]}"
-            result = self._generate_content_with_retry([full_prompt], is_json=True, temperature=0.5)
+            result = self._generate_content_with_retry(full_prompt, is_json=True, temperature=0.5)
         else:
             result = self._generate_content_with_retry([document_input, prompt], is_json=True, temperature=0.5)
         
@@ -239,8 +260,8 @@ Capture the main ideas, key arguments, and important facts.
 Revision Notes:"""
         if isinstance(document_input, str) and document_input.strip():
             full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:15000]}"
-            result = self._generate_content_with_retry([full_prompt], model=self.lite_model)
+            result = self._generate_content_with_retry(full_prompt, model=self.lite_model_name)
         else:
-            result = self._generate_content_with_retry([document_input, prompt], model=self.lite_model)
+            result = self._generate_content_with_retry([document_input, prompt], model=self.lite_model_name)
             
         return result if result else "Sorry, I encountered an error while trying to generate the summary."

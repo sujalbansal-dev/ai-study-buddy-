@@ -47,11 +47,11 @@ const ChatInterface = ({ documentId, onReset }) => {
       }, {
         timeout: 30000
       });
-      
-      const aiMessage = { 
-        id: Date.now() + 1, 
-        text: response.data.answer, 
-        sender: 'ai' 
+
+      const aiMessage = {
+        id: Date.now() + 1,
+        text: response.data.answer,
+        sender: 'ai'
       };
       setMessages(prev => [...prev, aiMessage]);
     } catch (err) {
@@ -90,7 +90,7 @@ const ChatInterface = ({ documentId, onReset }) => {
               {error}
             </div>
           )}
-          <button 
+          <button
             onClick={onReset}
             className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-all active:scale-95"
             title="Reset Chat"
@@ -100,21 +100,19 @@ const ChatInterface = ({ documentId, onReset }) => {
           </button>
         </div>
       </div>
-      
+
       <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-transparent">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex animate-fade-in-up ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`flex max-w-[85%] ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-              <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center border ${
-                msg.sender === 'user' ? 'bg-blue-100 border-blue-200 ml-3' : 'bg-white border-slate-200 shadow-sm mr-3'
-              }`}>
+              <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center border ${msg.sender === 'user' ? 'bg-blue-100 border-blue-200 ml-3' : 'bg-white border-slate-200 shadow-sm mr-3'
+                }`}>
                 {msg.sender === 'user' ? <User className="w-4 h-4 text-blue-600" /> : <Bot className="w-4 h-4 text-blue-600" />}
               </div>
-              <div className={`p-3.5 rounded-2xl text-sm leading-relaxed shadow-sm backdrop-blur-md border ${
-                msg.sender === 'user' 
-                  ? 'bg-blue-600 text-white rounded-lg shadow-md border-blue-500 rounded-tr-none' 
+              <div className={`p-3.5 rounded-2xl text-sm leading-relaxed shadow-sm backdrop-blur-md border ${msg.sender === 'user'
+                  ? 'bg-blue-600 text-white rounded-lg shadow-md border-blue-500 rounded-tr-none'
                   : 'bg-white text-slate-800 border-slate-200 rounded-tl-none prose prose-sm max-w-none'
-              }`}>
+                }`}>
                 {msg.sender === 'user' ? (
                   <p className="whitespace-pre-wrap">{msg.text}</p>
                 ) : (
@@ -147,9 +145,9 @@ const ChatInterface = ({ documentId, onReset }) => {
             <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
             <span>{error}</span>
           </div>
-          <button 
-            type="button" 
-            onClick={() => setError('')} 
+          <button
+            type="button"
+            onClick={() => setError('')}
             className="text-red-400 hover:text-red-600 font-bold ml-2 p-1"
             title="Dismiss error"
           >
@@ -168,8 +166,8 @@ const ChatInterface = ({ documentId, onReset }) => {
             className="w-full pl-4 pr-12 py-3.5 bg-white border border-slate-200 shadow-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all text-sm text-slate-800 placeholder-slate-400"
             disabled={isLoading}
           />
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={!input.trim() || isLoading}
             className="absolute right-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
           >

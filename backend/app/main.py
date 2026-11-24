@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv, find_dotenv
-import google.generativeai as genai
 
 # 1. Force find and load the .env file FIRST if present (useful for local development)
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
@@ -14,9 +13,6 @@ api_key = os.getenv("GEMINI_API_KEY")
 # 2. Hard fail if the key isn't found in environment variables
 if not api_key:
     raise ValueError("CRITICAL ERROR: GEMINI_API_KEY is missing from the environment. Check your environment variables or .env file.")
-
-# 3. Configure the SDK
-genai.configure(api_key=api_key)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

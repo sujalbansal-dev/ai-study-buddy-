@@ -254,9 +254,14 @@ def ask_question(request: AskRequest):
     """
     Endpoint to answer questions using lightweight cached RAG context (never re-embeds whole PDF).
     """
+    start_time = time.time()
+    print(f"[Ask START] Received question='{request.question[:60]}' for doc_id={request.document_id}")
+    
     if not ai_service:
+        print("[Ask ERROR] AI Service is not initialized.")
         raise HTTPException(status_code=500, detail="AI Service is not initialized. Please verify GEMINI_API_KEY.")
     if not request.question.strip():
+        print("[Ask ERROR] Question was empty.")
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
         
     doc_data = get_document_data(request.document_id)
@@ -264,6 +269,7 @@ def ask_question(request: AskRequest):
     
     # Fast retrieval without re-embedding the whole document
     relevant_context = ""
+    retrieval_method = "direct"
     if chunks:
         embeddings = doc_data.get("embeddings", [])
         if embeddings and len(embeddings) == len(chunks[:len(embeddings)]):
@@ -277,14 +283,16 @@ def ask_question(request: AskRequest):
                     scores.sort(key=lambda x: x[0], reverse=True)
                     top_chunks = [chunks[i] for _, i in scores[:4]]
                     relevant_context = "\n\n---\n\n".join(top_chunks)
+                    retrieval_method = "cosine_embeddings"
             except Exception as e:
-                print(f"[Ask] Query embedding failed ({e}); falling back to BM25.")
+                print(f"[Ask Embedding Warning] Query embedding failed ({e}); falling back to BM25.")
                 relevant_context = ""
 
         # BM25 Fallback (zero latency, zero API rate limits)
         if not relevant_context:
             matched_chunks = keyword_bm25_search(request.question, chunks, top_k=4)
             relevant_context = "\n\n---\n\n".join(matched_chunks)
+            retrieval_method = "bm25_keywords"
 
     try:
         if relevant_context:
@@ -292,13 +300,18 @@ def ask_question(request: AskRequest):
         else:
             inline_pdf = get_inline_pdf(request.document_id)
             answer = ai_service.generate_rag_answer(request.question, inline_pdf)
+            retrieval_method = "inline_pdf"
             
+        duration = time.time() - start_time
+        print(f"[Ask FINISH] Successfully answered in {duration:.2f}s using {retrieval_method} (doc_id={request.document_id})")
         return {
             "answer": answer, 
             "context_used": ["Indexed Document Context"]
         }
     except Exception as e:
+        duration = time.time() - start_time
         err_msg = str(e)
+        print(f"[Ask ERROR] Failed after {duration:.2f}s for doc_id={request.document_id}: {type(e).__name__} - {err_msg}")
         if "429" in err_msg:
             raise HTTPException(status_code=429, detail="Rate limit reached — please wait a few seconds and try again.")
         raise HTTPException(status_code=500, detail=f"Error processing question: {err_msg}")
