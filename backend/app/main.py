@@ -43,8 +43,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the study routes
+# Include the study routes at both root and /api prefixes for full compatibility
 app.include_router(study_router)
+app.include_router(study_router, prefix="/api")
 
 @app.get("/")
 def read_root():

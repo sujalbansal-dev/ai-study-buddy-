@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -56,6 +56,10 @@ const ChatInterface = ({ documentId, onReset }) => {
       console.error(err);
       if (err.response?.status === 429) {
         setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      } else if (err.response?.status === 404) {
+        setError(err.response?.data?.detail || 'Document not found on the server. Please re-upload your document.');
+      } else if (err.response?.data?.detail) {
+        setError(err.response.data.detail);
       } else {
         setError('Failed to connect to the AI. Ensure the backend is running.');
       }

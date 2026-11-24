@@ -16,7 +16,10 @@ except Exception as e:
     print(f"Warning: Failed to initialize AI service. Please check your GEMINI_API_KEY. Error: {e}")
     ai_service = None
 
-UPLOAD_DIR = "uploads"
+# Resolve UPLOAD_DIR anchored to the backend folder regardless of working directory
+CURRENT_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.dirname(os.path.dirname(CURRENT_FILE_DIR))
+UPLOAD_DIR = os.path.join(BACKEND_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class AskRequest(BaseModel):
@@ -36,9 +39,22 @@ class ResetRequest(BaseModel):
     document_id: str
 
 def get_inline_pdf(document_id: str) -> dict:
-    file_path = os.path.join(UPLOAD_DIR, f"{document_id}.pdf")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Document not found")
+    possible_paths = [
+        os.path.join(UPLOAD_DIR, f"{document_id}.pdf"),
+        os.path.join(os.getcwd(), "uploads", f"{document_id}.pdf"),
+        os.path.join(os.getcwd(), "backend", "uploads", f"{document_id}.pdf"),
+    ]
+    file_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            file_path = path
+            break
+
+    if not file_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document with ID '{document_id}' not found on server. On free-tier cloud instances, storage is ephemeral and cleared upon restart. Please re-upload your document."
+        )
         
     try:
         with open(file_path, "rb") as f:
@@ -49,6 +65,7 @@ def get_inline_pdf(document_id: str) -> dict:
     return {"mime_type": "application/pdf", "data": document_bytes}
 
 @router.post("/upload", status_code=status.HTTP_200_OK)
+@router.post("/upload/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def upload_pdf(file: UploadFile = File(...)):
     """
     Endpoint to upload a PDF. 
@@ -80,6 +97,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         )
 
 @router.post("/ask", status_code=status.HTTP_200_OK)
+@router.post("/ask/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def ask_question(request: AskRequest):
     """
     Endpoint to ask a question using Inline Data.
@@ -103,6 +121,7 @@ async def ask_question(request: AskRequest):
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
 @router.post("/generate/quiz", status_code=status.HTTP_200_OK)
+@router.post("/generate/quiz/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def generate_quiz_endpoint(request: QuizRequest):
     """
     Endpoint to generate a quiz using Inline Data.
@@ -125,6 +144,7 @@ async def generate_quiz_endpoint(request: QuizRequest):
         raise HTTPException(status_code=500, detail=f"An error occurred while generating the quiz: {str(e)}")
 
 @router.post("/generate/flashcards", status_code=status.HTTP_200_OK)
+@router.post("/generate/flashcards/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def generate_flashcards_endpoint(request: FlashcardRequest):
     """
     Endpoint to generate flashcards using Inline Data.
@@ -147,6 +167,7 @@ async def generate_flashcards_endpoint(request: FlashcardRequest):
         raise HTTPException(status_code=500, detail=f"An error occurred while generating flashcards: {str(e)}")
 
 @router.post("/generate/summary", status_code=status.HTTP_200_OK)
+@router.post("/generate/summary/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def generate_summary_endpoint(request: SummaryRequest):
     """
     Endpoint to generate a summary using Inline Data.
@@ -169,16 +190,20 @@ async def generate_summary_endpoint(request: SummaryRequest):
         raise HTTPException(status_code=500, detail=f"An error occurred while generating the summary: {str(e)}")
 
 @router.post("/reset", status_code=status.HTTP_200_OK)
+@router.post("/reset/", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def reset_session(request: ResetRequest):
     """
     Endpoint to aggressively delete the local PDF file and free up server space.
     """
-    file_path = os.path.join(UPLOAD_DIR, f"{request.document_id}.pdf")
-    try:
+    deleted = False
+    for base in [UPLOAD_DIR, os.path.join(os.getcwd(), "uploads"), os.path.join(os.getcwd(), "backend", "uploads")]:
+        file_path = os.path.join(base, f"{request.document_id}.pdf")
         if os.path.exists(file_path):
-            os.remove(file_path)
-            return {"message": "Server memory wiped. PDF aggressively deleted."}
-        else:
-            return {"message": "Document already deleted or not found."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete document: {e}")
+            try:
+                os.remove(file_path)
+                deleted = True
+            except Exception:
+                pass
+    if deleted:
+        return {"message": "Server memory wiped. PDF aggressively deleted."}
+    return {"message": "Document already deleted or not found."}

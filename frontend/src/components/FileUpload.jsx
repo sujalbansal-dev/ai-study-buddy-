@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 import { UploadCloud, File, CheckCircle, AlertCircle, Loader } from 'lucide-react';
 
 const FileUpload = ({ onUploadSuccess }) => {
@@ -66,7 +66,13 @@ const FileUpload = ({ onUploadSuccess }) => {
       }
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.detail || 'Failed to upload file. Is the backend running?');
+      if (err.response?.status === 413) {
+        setError('The file is too large for the server. Please try a smaller PDF.');
+      } else if (err.response?.data?.detail) {
+        setError(err.response.data.detail);
+      } else {
+        setError('Failed to upload file. Is the backend running?');
+      }
     } finally {
       setUploading(false);
     }

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 import { BrainCircuit, Loader, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import Confetti from 'react-confetti';
 import ReactMarkdown from 'react-markdown';
@@ -56,8 +56,12 @@ const QuizInterface = ({ documentId, onReset }) => {
       console.error(err);
       if (err.response?.status === 429) {
         setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      } else if (err.response?.status === 404) {
+        setError(err.response?.data?.detail || 'Document not found on server. Please re-upload your document.');
+      } else if (err.response?.data?.detail) {
+        setError(err.response.data.detail);
       } else {
-        setError(err.response?.data?.detail || 'Failed to generate quiz. Is the backend running?');
+        setError('Failed to generate quiz. Is the backend running?');
       }
     } finally {
       setIsLoading(false);
