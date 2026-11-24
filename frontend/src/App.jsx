@@ -32,7 +32,7 @@ function App() {
       localStorage.removeItem(`quiz_${documentId}`);
       localStorage.removeItem(`flashcards_${documentId}`);
       try {
-        await axios.post(`${API_URL}/reset`, { document_id: documentId });
+        await axios.post(`${API_URL}/reset`, { document_id: documentId }, { timeout: 10000 });
       } catch (err) {
         console.error("Failed to reset on backend", err);
       }

@@ -58,7 +58,8 @@ const FileUpload = ({ onUploadSuccess }) => {
       const response = await axios.post(`${API_URL}/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
-        }
+        },
+        timeout: 60000
       });
       setSuccess('File uploaded successfully!');
       if (onUploadSuccess) {
@@ -66,10 +67,14 @@ const FileUpload = ({ onUploadSuccess }) => {
       }
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 413) {
+      if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
+        setError('Upload timed out after 60 seconds. The server might be waking up (Render cold start) — please try again.');
+      } else if (err.response?.status === 413) {
         setError('The file is too large for the server. Please try a smaller PDF.');
       } else if (err.response?.data?.detail) {
-        setError(err.response.data.detail);
+        setError(typeof err.response.data.detail === 'string' ? err.response.data.detail : JSON.stringify(err.response.data.detail));
+      } else if (err.message) {
+        setError(`Upload failed: ${err.message}`);
       } else {
         setError('Failed to upload file. Is the backend running?');
       }

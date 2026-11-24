@@ -44,6 +44,8 @@ const QuizInterface = ({ documentId, onReset }) => {
     try {
       const response = await axios.post(`${API_URL}/generate/quiz`, {
         document_id: documentId
+      }, {
+        timeout: 30000
       });
 
       if (response.data.quiz && response.data.quiz.error) {
@@ -54,15 +56,19 @@ const QuizInterface = ({ documentId, onReset }) => {
       }
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 429) {
-        setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      let errorMsg = 'Failed to generate quiz. Is the backend running?';
+      if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
+        errorMsg = 'Request timed out after 30 seconds. The server might be busy or starting up — please try again.';
+      } else if (err.response?.status === 429) {
+        errorMsg = 'Rate limit reached — please wait a few seconds and try again.';
       } else if (err.response?.status === 404) {
-        setError(err.response?.data?.detail || 'Document not found on server. Please re-upload your document.');
+        errorMsg = err.response?.data?.detail || 'Document not found on server. Please re-upload your document.';
       } else if (err.response?.data?.detail) {
-        setError(err.response.data.detail);
-      } else {
-        setError('Failed to generate quiz. Is the backend running?');
+        errorMsg = typeof err.response.data.detail === 'string' ? err.response.data.detail : JSON.stringify(err.response.data.detail);
+      } else if (err.message) {
+        errorMsg = `Connection error: ${err.message}`;
       }
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }

@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import random
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 
@@ -30,12 +29,12 @@ class StudyBuddyAI:
         is_json: bool = False,
         temperature: Optional[float] = None,
         model: Optional[Any] = None,
-        max_retries: int = 5,
-        base_delay: float = 2.0
+        max_retries: int = 2,
+        base_delay: float = 1.5
     ) -> Optional[str]:
         """
-        Helper method to handle API calls with graceful exponential backoff retry logic
-        for 429 RESOURCE_EXHAUSTED / rate limit errors.
+        Helper method to handle API calls with fast, non-blocking exponential backoff (max 2 retries, total < 5s)
+        and detailed console logging so errors are crystal clear in Render logs.
         """
         target_model = model if model else self.model
         generation_config = {}
@@ -55,61 +54,89 @@ class StudyBuddyAI:
                 )
                 return response.text
             except Exception as e:
-                error_str = str(e).lower()
+                error_str = str(e)
+                print(f"[Gemini API Call Failed] Attempt {attempt + 1}/{max_retries + 1}: {type(e).__name__} - {error_str}")
                 is_rate_limit = (
                     "429" in error_str
-                    or "resource_exhausted" in error_str
-                    or "quota" in error_str
-                    or "rate limit" in error_str
-                    or "exhausted" in error_str
+                    or "resource_exhausted" in error_str.lower()
+                    or "quota" in error_str.lower()
+                    or "rate limit" in error_str.lower()
+                    or "exhausted" in error_str.lower()
                 )
                 
                 if is_rate_limit and attempt < max_retries:
-                    # Exponential backoff: base_delay * 2^attempt + jitter
-                    delay = (base_delay * (2 ** attempt)) + random.uniform(0.5, 1.5)
+                    # Short backoff: 1.5s on attempt 0, 3.0s on attempt 1 (total < 5 seconds)
+                    delay = base_delay * (2 ** attempt)
                     print(
-                        f"[Gemini Rate Limit] 429 RESOURCE_EXHAUSTED detected. "
-                        f"Retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})..."
+                        f"[Gemini Rate Limit] 429 RESOURCE_EXHAUSTED. "
+                        f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})..."
                     )
                     time.sleep(delay)
                     continue
                 elif is_rate_limit:
-                    print(f"[Gemini Rate Limit] Max retries ({max_retries}) exceeded for 429 RESOURCE_EXHAUSTED.")
-                    raise Exception("429: API rate limit reached after retries. Please wait a moment before trying again.")
+                    print(f"[Gemini Rate Limit] Max retries ({max_retries}) exceeded for 429 rate limit.")
+                    raise Exception(f"429: API rate limit reached ({error_str[:120]}). Please wait a few seconds and try again.")
                 else:
-                    # Log other API errors such as network timeouts
-                    print(f"Error communicating with Gemini API: {type(e).__name__} - {e}")
-                    return None
+                    print(f"[Gemini API Unhandled Error] {type(e).__name__}: {error_str}")
+                    raise e
 
     def get_embedding(self, text: str, model: str = "models/text-embedding-004") -> List[float]:
         """
-        Generates text embeddings using the cloud Gemini Embedding API,
-        avoiding any heavy local ML dependencies (like PyTorch or sentence-transformers)
-        to keep RAM usage well under Render's 512 MB free tier.
+        Generates a single query embedding using Gemini's Embedding API.
+        Fails fast without long retries so queries can gracefully fall back to BM25 search.
         """
-        for attempt in range(4):
+        try:
+            result = genai.embed_content(
+                model=model,
+                content=text,
+                task_type="retrieval_query"
+            )
+            return result.get("embedding", [])
+        except Exception as e:
+            print(f"[Gemini Embedding Error] Failed to get query embedding: {type(e).__name__} - {e}")
+            return []
+
+    def get_chunk_embeddings(self, chunks: List[str], model: str = "models/text-embedding-004") -> List[List[float]]:
+        """
+        Computes chunk embeddings ONCE during document upload.
+        Embeds chunks sequentially with fast error handling. If rate limit is hit,
+        logs warning and returns whatever was computed so the upload completes and falls back to BM25.
+        """
+        embeddings = []
+        for i, chunk in enumerate(chunks):
             try:
                 result = genai.embed_content(
                     model=model,
-                    content=text,
+                    content=chunk,
                     task_type="retrieval_document"
                 )
-                return result.get("embedding", [])
+                embeddings.append(result.get("embedding", []))
             except Exception as e:
-                error_str = str(e).lower()
-                if ("429" in error_str or "resource_exhausted" in error_str) and attempt < 3:
-                    time.sleep(2 * (2 ** attempt))
-                    continue
-                print(f"Error generating embedding with Gemini API: {e}")
-                return []
-        return []
+                print(f"[Gemini Chunk Embedding] Hit error on chunk {i+1}/{len(chunks)} ({type(e).__name__}: {e}). Halting embedding batch early.")
+                break
+        return embeddings
 
-    def generate_rag_answer(self, question: str, inline_pdf: dict) -> str:
+    def generate_rag_answer(self, question: str, context: Any) -> str:
         """
-        Generates an answer to the user's question using strictly the provided document.
+        Generates an answer to the user's question.
+        If context is a string (relevant chunks from RAG), uses small text prompt (~99% fewer tokens).
+        If context is an inline PDF dict, uses multimodal fallback.
         """
-        prompt = f"""
-You are a helpful AI study assistant. Your task is to answer the user's question based ONLY on the provided document.
+        if isinstance(context, str) and context.strip():
+            prompt = f"""You are a helpful, accurate AI study assistant. Your task is to answer the user's question based strictly on the provided context.
+If the context does not contain enough information to answer the question, state clearly: "I do not have enough information in the provided material to answer this question." Do not use outside knowledge.
+Do not use markdown asterisks (*, **, or ***) for bolding, italics, or formatting titles. If you need to emphasize a term, write it in ALL CAPS or use standard plain text spacing. Ensure that any mathematical multiplication operations use standard text format clearly without formatting styles.
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:"""
+            result = self._generate_content_with_retry([prompt])
+        else:
+            prompt = f"""You are a helpful AI study assistant. Your task is to answer the user's question based ONLY on the provided document.
 If the document does not contain the information needed to answer the question, state clearly that you do not have enough information to answer. Do not use outside knowledge.
 Do not use markdown asterisks (*, **, or ***) for bolding, italics, or formatting titles. If you need to emphasize a term, write it in ALL CAPS or use standard plain text spacing. Ensure that any mathematical multiplication operations use standard text format clearly without formatting styles.
 
@@ -117,44 +144,48 @@ Question:
 {question}
 
 Answer:"""
-        
-        result = self._generate_content_with_retry([inline_pdf, prompt])
+            result = self._generate_content_with_retry([context, prompt])
+
         return result if result else "Sorry, I encountered an error while trying to generate the answer."
 
-    def generate_quiz(self, inline_pdf: dict) -> Dict[str, Any]:
+    def generate_quiz(self, document_input: Any) -> Dict[str, Any]:
         """
-        Generates a quiz (Multiple Choice, True/False, and Short Answer) derived strictly from the document.
+        Generates a quiz derived strictly from the document (accepts either extracted text string or inline PDF dict).
         """
-        prompt = f"""
-You are an expert educator. Create a comprehensive quiz based strictly on the provided document.
-CRITICAL INSTRUCTION: First, silently analyze the provided document and identify all the major core concepts and themes. 
-Second, you must generate a question for EVERY single core concept you identified so that the entire document is covered. 
-Third, to ensure variety, randomly alter the *angle* of the questions you generate for these core topics. For example, use a mix of real-world scenarios, edge-case analysis, direct definitions, and conceptual comparisons. Do not skip any major topic.
+        prompt = """You are an expert educator. Create a comprehensive quiz based strictly on the provided material.
+CRITICAL INSTRUCTION: First, silently analyze the provided material and identify all the major core concepts and themes. 
+Second, generate a question for EVERY single core concept you identified so that the material is covered. 
+Third, use a mix of real-world scenarios, direct definitions, and conceptual comparisons.
 Output the quiz strictly in JSON format.
 The JSON structure must exactly match this format:
-{{
+{
   "multiple_choice": [
-    {{
+    {
       "question": "...",
       "options": ["A", "B", "C", "D"],
       "answer": "..."
-    }}
+    }
   ],
   "true_false": [
-    {{
+    {
       "question": "...",
       "answer": true/false
-    }}
+    }
   ],
   "short_answer": [
-    {{
+    {
       "question": "...",
       "answer_key": "..."
-    }}
+    }
   ]
-}}
+}
 """
-        result = self._generate_content_with_retry([inline_pdf, prompt], is_json=True, temperature=0.5)
+        if isinstance(document_input, str) and document_input.strip():
+            # Pass extracted text directly in prompt, trimmed to ~12k characters to avoid token saturation
+            full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:12000]}"
+            result = self._generate_content_with_retry([full_prompt], is_json=True, temperature=0.5)
+        else:
+            result = self._generate_content_with_retry([document_input, prompt], is_json=True, temperature=0.5)
         
         if result:
             try:
@@ -164,25 +195,28 @@ The JSON structure must exactly match this format:
                 return {"error": "Failed to parse quiz response"}
         return {"error": "Failed to generate quiz due to API error"}
 
-    def generate_flashcards(self, inline_pdf: dict) -> List[Dict[str, str]]:
+    def generate_flashcards(self, document_input: Any) -> List[Dict[str, str]]:
         """
-        Extracts key terms and definitions into a structured list of front/back flashcards.
+        Extracts key terms and definitions into structured flashcards.
         """
-        prompt = f"""
-You are an expert educator. Extract key terms and their definitions from the provided document to create flashcards.
-CRITICAL INSTRUCTION: First, silently analyze the provided document and identify all the major core concepts and themes. 
-Second, you must generate a flashcard for EVERY single core concept you identified so that the entire document is covered. 
-Third, to ensure variety, randomly alter the *angle* of the flashcards you generate for these core topics. For example, use a mix of real-world scenarios, edge-case analysis, direct definitions, and conceptual comparisons. Do not skip any major topic.
+        prompt = """You are an expert educator. Extract key terms and their definitions from the provided material to create flashcards.
+CRITICAL INSTRUCTION: First, silently analyze the provided material and identify the major core concepts. 
+Second, generate a flashcard for EVERY single core concept you identified. 
+Third, provide a clear, concise definition or explanation for each.
 Output strictly in JSON format as a list of objects.
 The JSON structure must exactly match this format:
 [
-  {{
+  {
     "front": "Term or Concept",
     "back": "Clear, concise definition or explanation"
-  }}
+  }
 ]
 """
-        result = self._generate_content_with_retry([inline_pdf, prompt], is_json=True, temperature=0.5)
+        if isinstance(document_input, str) and document_input.strip():
+            full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:12000]}"
+            result = self._generate_content_with_retry([full_prompt], is_json=True, temperature=0.5)
+        else:
+            result = self._generate_content_with_retry([document_input, prompt], is_json=True, temperature=0.5)
         
         if result:
             try:
@@ -195,15 +229,18 @@ The JSON structure must exactly match this format:
                 return []
         return []
 
-    def generate_summary(self, inline_pdf: dict) -> str:
+    def generate_summary(self, document_input: Any) -> str:
         """
-        Generates concise, bulleted revision notes from the document.
+        Generates concise, bulleted revision notes from the document using the lightweight model.
         """
-        prompt = f"""
-You are an expert educator. Please provide a concise, comprehensive summary of the provided document in the form of bulleted revision notes.
+        prompt = """You are an expert educator. Please provide a concise, comprehensive summary of the provided material in the form of bulleted revision notes.
 Capture the main ideas, key arguments, and important facts.
 
 Revision Notes:"""
-        
-        result = self._generate_content_with_retry([inline_pdf, prompt], model=self.lite_model)
+        if isinstance(document_input, str) and document_input.strip():
+            full_prompt = f"{prompt}\n\nStudy Material:\n{document_input[:15000]}"
+            result = self._generate_content_with_retry([full_prompt], model=self.lite_model)
+        else:
+            result = self._generate_content_with_retry([document_input, prompt], model=self.lite_model)
+            
         return result if result else "Sorry, I encountered an error while trying to generate the summary."

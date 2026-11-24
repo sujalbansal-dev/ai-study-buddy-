@@ -44,6 +44,8 @@ const ChatInterface = ({ documentId, onReset }) => {
       const response = await axios.post(`${API_URL}/ask`, {
         document_id: documentId,
         question: userMessage.text
+      }, {
+        timeout: 30000
       });
       
       const aiMessage = { 
@@ -54,15 +56,19 @@ const ChatInterface = ({ documentId, onReset }) => {
       setMessages(prev => [...prev, aiMessage]);
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 429) {
-        setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      let errorMsg = 'Failed to connect to the AI. Ensure the backend is running.';
+      if (err.code === 'ECONNABORTED' || err.message?.toLowerCase().includes('timeout')) {
+        errorMsg = 'Request timed out after 30 seconds. The server might be busy or starting up — please try again.';
+      } else if (err.response?.status === 429) {
+        errorMsg = 'Rate limit reached — please wait a few seconds and try again.';
       } else if (err.response?.status === 404) {
-        setError(err.response?.data?.detail || 'Document not found on the server. Please re-upload your document.');
+        errorMsg = err.response?.data?.detail || 'Document not found on the server. Please re-upload your document.';
       } else if (err.response?.data?.detail) {
-        setError(err.response.data.detail);
-      } else {
-        setError('Failed to connect to the AI. Ensure the backend is running.');
+        errorMsg = typeof err.response.data.detail === 'string' ? err.response.data.detail : JSON.stringify(err.response.data.detail);
+      } else if (err.message) {
+        errorMsg = `Connection error: ${err.message}`;
       }
+      setError(errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -134,6 +140,23 @@ const ChatInterface = ({ documentId, onReset }) => {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {error && (
+        <div className="mx-4 mb-2 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center justify-between shadow-sm animate-fade-in">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button 
+            type="button" 
+            onClick={() => setError('')} 
+            className="text-red-400 hover:text-red-600 font-bold ml-2 p-1"
+            title="Dismiss error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="p-4 bg-white/80 border-t border-white/80 backdrop-blur-md">
         <form onSubmit={handleSend} className="relative flex items-center">
