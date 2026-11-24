@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import traceback
 from typing import List, Dict, Any, Optional
 
 from google import genai
