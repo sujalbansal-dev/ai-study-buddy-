@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { BrainCircuit, Loader, AlertTriangle, CheckCircle } from 'lucide-react';
+import { BrainCircuit, Loader, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import Confetti from 'react-confetti';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
-const QuizInterface = ({ documentId }) => {
+const QuizInterface = ({ documentId, onReset }) => {
   const [quizData, setQuizData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,6 +17,20 @@ const QuizInterface = ({ documentId }) => {
     if (!documentId) {
       setError('Please upload a document first to generate a quiz.');
       return;
+    }
+
+    const cacheKey = `quiz_${documentId}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        setQuizData(JSON.parse(cached));
+        setAnswers({});
+        setScore(null);
+        return;
+      } catch (e) {
+        // Fallback to fetch if cache is invalid
+        console.error("Invalid cache", e);
+      }
     }
 
     setIsLoading(true);
@@ -31,10 +48,15 @@ const QuizInterface = ({ documentId }) => {
         setError(response.data.quiz.error);
       } else {
         setQuizData(response.data.quiz);
+        localStorage.setItem(cacheKey, JSON.stringify(response.data.quiz));
       }
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.detail || 'Failed to generate quiz. Is the backend running?');
+      if (err.response?.status === 429) {
+        setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      } else {
+        setError(err.response?.data?.detail || 'Failed to generate quiz. Is the backend running?');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -130,12 +152,22 @@ const QuizInterface = ({ documentId }) => {
             <BrainCircuit className="w-5 h-5 mr-2 text-blue-600" />
             Your Custom Quiz
           </h3>
-          {score && (
-            <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border border-blue-400 px-4 py-1.5 rounded-full text-sm font-bold flex items-center shadow-md">
-              <CheckCircle className="w-4 h-4 mr-1.5" />
-              Score: {score.correct} / {score.total}
-            </div>
-          )}
+          <div className="flex items-center space-x-3">
+            {score && (
+              <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white border border-blue-400 px-4 py-1.5 rounded-full text-sm font-bold flex items-center shadow-md">
+                <CheckCircle className="w-4 h-4 mr-1.5" />
+                Score: {score.correct} / {score.total}
+              </div>
+            )}
+            <button 
+              onClick={onReset}
+              className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-all active:scale-95"
+              title="Reset Quiz"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reset Quiz</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
@@ -145,7 +177,10 @@ const QuizInterface = ({ documentId }) => {
               <div className="space-y-6">
                 {quizData.multiple_choice.map((q, qIndex) => (
                   <div key={`mc-${qIndex}`} className="bg-white/80 p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="font-medium text-slate-800 mb-3">{qIndex + 1}. {q.question}</p>
+                    <div className="font-medium text-slate-800 mb-3 flex space-x-1 prose prose-sm max-w-none">
+                      <span>{qIndex + 1}.</span>
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{q.question}</ReactMarkdown>
+                    </div>
                     <div className="space-y-2">
                       {q.options.map((opt, oIndex) => {
                         const isSelected = answers[`mc-${qIndex}`] === opt;
@@ -165,7 +200,9 @@ const QuizInterface = ({ documentId }) => {
                             disabled={!!score}
                             className={btnClass}
                           >
-                            {opt}
+                            <span className="prose prose-sm max-w-none text-left w-full inline-block">
+                              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{opt}</ReactMarkdown>
+                            </span>
                           </button>
                         );
                       })}
@@ -187,7 +224,10 @@ const QuizInterface = ({ documentId }) => {
               <div className="space-y-6">
                 {quizData.true_false.map((q, qIndex) => (
                   <div key={`tf-${qIndex}`} className="bg-white/80 p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="font-medium text-slate-800 mb-3">{qIndex + 1}. {q.question}</p>
+                    <div className="font-medium text-slate-800 mb-3 flex space-x-1 prose prose-sm max-w-none">
+                      <span>{qIndex + 1}.</span>
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{q.question}</ReactMarkdown>
+                    </div>
                     <div className="flex space-x-3">
                       {['True', 'False'].map(opt => {
                         const optValue = opt.toLowerCase() === 'true';

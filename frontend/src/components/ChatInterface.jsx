@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { Send, User, Bot, AlertTriangle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import { Send, User, Bot, AlertTriangle, RefreshCw } from 'lucide-react';
 
-const ChatInterface = () => {
+const ChatInterface = ({ documentId, onReset }) => {
   const [messages, setMessages] = useState([
     { id: 1, text: "Hi! I'm your AI Study Buddy. Ask me anything about your uploaded documents.", sender: 'ai' }
   ]);
@@ -29,8 +32,15 @@ const ChatInterface = () => {
     setIsLoading(true);
     setError('');
 
+    if (!documentId) {
+      setError('Please upload a document first before asking questions.');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const response = await axios.post('http://localhost:8000/ask', {
+        document_id: documentId,
         question: userMessage.text
       });
       
@@ -42,7 +52,11 @@ const ChatInterface = () => {
       setMessages(prev => [...prev, aiMessage]);
     } catch (err) {
       console.error(err);
-      setError('Failed to connect to the AI. Ensure the backend is running.');
+      if (err.response?.status === 429) {
+        setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      } else {
+        setError('Failed to connect to the AI. Ensure the backend is running.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -57,12 +71,22 @@ const ChatInterface = () => {
           </div>
           <h3 className="font-bold text-slate-800">Tutor Chat</h3>
         </div>
-        {error && (
-          <div className="text-xs text-red-600 flex items-center bg-red-50 border border-red-100 px-2 py-1 rounded">
-            <AlertTriangle className="w-3 h-3 mr-1" />
-            {error}
-          </div>
-        )}
+        <div className="flex items-center space-x-3">
+          {error && (
+            <div className="text-xs text-red-600 flex items-center bg-red-50 border border-red-100 px-2 py-1 rounded">
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              {error}
+            </div>
+          )}
+          <button 
+            onClick={onReset}
+            className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-all active:scale-95"
+            title="Reset Chat"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Reset Chat</span>
+          </button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-transparent">
@@ -77,9 +101,13 @@ const ChatInterface = () => {
               <div className={`p-3.5 rounded-2xl text-sm leading-relaxed shadow-sm backdrop-blur-md border ${
                 msg.sender === 'user' 
                   ? 'bg-blue-600 text-white rounded-lg shadow-md border-blue-500 rounded-tr-none' 
-                  : 'bg-white text-slate-800 border-slate-200 rounded-tl-none'
+                  : 'bg-white text-slate-800 border-slate-200 rounded-tl-none prose prose-sm max-w-none'
               }`}>
-                <p className="whitespace-pre-wrap">{msg.text}</p>
+                {msg.sender === 'user' ? (
+                  <p className="whitespace-pre-wrap">{msg.text}</p>
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{msg.text}</ReactMarkdown>
+                )}
               </div>
             </div>
           </div>

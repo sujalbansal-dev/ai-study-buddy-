@@ -3,12 +3,42 @@ import FileUpload from './components/FileUpload';
 import ChatInterface from './components/ChatInterface';
 import QuizInterface from './components/QuizInterface';
 import FlashcardInterface from './components/FlashcardInterface';
+import SummaryInterface from './components/SummaryInterface';
 import FeatureTabs from './components/FeatureTabs';
-import { BookOpen, Sparkles } from 'lucide-react';
+import { BookOpen, Sparkles, RefreshCw } from 'lucide-react';
+import axios from 'axios';
+import 'katex/dist/katex.min.css';
 
 function App() {
   const [documentId, setDocumentId] = useState(null);
   const [activeTab, setActiveTab] = useState('chat');
+  const [globalKey, setGlobalKey] = useState(0);
+  const [tabKeys, setTabKeys] = useState({ chat: 0, quizzes: 0, flashcards: 0, summary: 0 });
+
+  const handleTabReset = (tabName) => {
+    if (documentId) {
+      if (tabName === 'summary') localStorage.removeItem(`summary_${documentId}`);
+      if (tabName === 'quizzes') localStorage.removeItem(`quiz_${documentId}`);
+      if (tabName === 'flashcards') localStorage.removeItem(`flashcards_${documentId}`);
+    }
+    setTabKeys(prev => ({ ...prev, [tabName]: prev[tabName] + 1 }));
+  };
+
+  const handleReset = async () => {
+    if (documentId) {
+      localStorage.removeItem(`summary_${documentId}`);
+      localStorage.removeItem(`quiz_${documentId}`);
+      localStorage.removeItem(`flashcards_${documentId}`);
+      try {
+        await axios.post('http://localhost:8000/reset', { document_id: documentId });
+      } catch (err) {
+        console.error("Failed to reset on backend", err);
+      }
+    }
+    setDocumentId(null);
+    setActiveTab('chat');
+    setGlobalKey(prev => prev + 1);
+  };
 
   const handleUploadSuccess = (id) => {
     setDocumentId(id);
@@ -27,6 +57,12 @@ function App() {
               AI Study Buddy
             </h1>
           </div>
+          <button
+            onClick={handleReset}
+            className="flex items-center space-x-2 bg-red-50 text-red-600 px-4 py-2 rounded-xl font-semibold border border-red-200 hover:bg-red-100 active:scale-95 transition-all shadow-sm"
+          >
+            <span>Reset Session 🔄</span>
+          </button>
         </div>
       </header>
 
@@ -67,10 +103,19 @@ function App() {
           <div className="lg:col-span-7 flex flex-col">
             <FeatureTabs activeTab={activeTab} setActiveTab={setActiveTab} />
             
-            <div className="flex-1 transition-all duration-300">
-              {activeTab === 'chat' && <ChatInterface />}
-              {activeTab === 'quizzes' && <QuizInterface documentId={documentId} />}
-              {activeTab === 'flashcards' && <FlashcardInterface documentId={documentId} />}
+            <div key={globalKey} className="flex-1 transition-all duration-300 relative">
+              <div className={activeTab === 'chat' ? 'block' : 'hidden'}>
+                <ChatInterface key={tabKeys.chat} documentId={documentId} onReset={() => handleTabReset('chat')} />
+              </div>
+              <div className={activeTab === 'quizzes' ? 'block' : 'hidden'}>
+                <QuizInterface key={tabKeys.quizzes} documentId={documentId} onReset={() => handleTabReset('quizzes')} />
+              </div>
+              <div className={activeTab === 'flashcards' ? 'block' : 'hidden'}>
+                <FlashcardInterface key={tabKeys.flashcards} documentId={documentId} onReset={() => handleTabReset('flashcards')} />
+              </div>
+              <div className={activeTab === 'summary' ? 'block' : 'hidden'}>
+                <SummaryInterface key={tabKeys.summary} documentId={documentId} onReset={() => handleTabReset('summary')} />
+              </div>
             </div>
           </div>
 

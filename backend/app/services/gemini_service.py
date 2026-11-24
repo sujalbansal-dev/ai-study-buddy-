@@ -7,10 +7,6 @@ class StudyBuddyAI:
     def __init__(self, api_key: Optional[str] = None):
         """
         Initializes the StudyBuddyAI service with the Gemini API.
-        
-        Args:
-            api_key (str, optional): The Gemini API key. If not provided, it will 
-                                     attempt to load from the 'GEMINI_API_KEY' environment variable.
         """
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
@@ -18,65 +14,64 @@ class StudyBuddyAI:
             
         genai.configure(api_key=self.api_key)
         
-        # Using gemini-2.5-flash for fast text generation
+        # Using gemini-2.5-flash for complex tasks
         self.model = genai.GenerativeModel('gemini-2.5-flash')
+        # Using flash-lite for simple text generation to save tokens and use higher rate limits
+        self.lite_model = genai.GenerativeModel('gemini-2.5-flash-lite')
         
-    def _generate_content_with_retry(self, prompt: str, is_json: bool = False) -> Optional[str]:
+    def _generate_content_with_retry(self, contents: list, is_json: bool = False, temperature: float = None, model: Optional[Any] = None) -> Optional[str]:
         """Helper method to handle API calls with basic error catching."""
+        target_model = model if model else self.model
         try:
-            # Enforce JSON output format when requested
-            generation_config = {"response_mime_type": "application/json"} if is_json else None
+            generation_config = {}
+            if is_json:
+                generation_config["response_mime_type"] = "application/json"
+            if temperature is not None:
+                generation_config["temperature"] = temperature
+                
+            if not generation_config:
+                generation_config = None
             
-            response = self.model.generate_content(
-                prompt,
+            response = target_model.generate_content(
+                contents,
                 generation_config=generation_config
             )
             return response.text
         except Exception as e:
-            # Catching API errors such as timeouts, quota limits, or network issues
+            error_str = str(e).lower()
+            if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                raise Exception("429: API rate limit reached.")
+                
+            # Catching other API errors such as timeouts or network issues
             print(f"Error communicating with Gemini API: {type(e).__name__} - {e}")
             return None
 
-    def generate_rag_answer(self, question: str, context_chunks: List[str]) -> str:
+    def generate_rag_answer(self, question: str, inline_pdf: dict) -> str:
         """
-        Generates an answer to the user's question using strictly the provided context chunks.
-        
-        Args:
-            question (str): The user's question.
-            context_chunks (List[str]): Retrieved relevant text chunks.
-            
-        Returns:
-            str: The generated answer.
+        Generates an answer to the user's question using strictly the provided document.
         """
-        context_str = "\n\n---\n\n".join(context_chunks)
         prompt = f"""
-You are a helpful AI study assistant. Your task is to answer the user's question based ONLY on the provided context.
-If the context does not contain the information needed to answer the question, state clearly that you do not have enough information to answer. Do not use outside knowledge.
+You are a helpful AI study assistant. Your task is to answer the user's question based ONLY on the provided document.
+If the document does not contain the information needed to answer the question, state clearly that you do not have enough information to answer. Do not use outside knowledge.
 Do not use markdown asterisks (*, **, or ***) for bolding, italics, or formatting titles. If you need to emphasize a term, write it in ALL CAPS or use standard plain text spacing. Ensure that any mathematical multiplication operations use standard text format clearly without formatting styles.
-
-Context:
-{context_str}
 
 Question:
 {question}
 
 Answer:"""
         
-        result = self._generate_content_with_retry(prompt)
+        result = self._generate_content_with_retry([inline_pdf, prompt])
         return result if result else "Sorry, I encountered an error while trying to generate the answer."
 
-    def generate_quiz(self, context_text: str) -> Dict[str, Any]:
+    def generate_quiz(self, inline_pdf: dict) -> Dict[str, Any]:
         """
-        Generates a quiz (Multiple Choice, True/False, and Short Answer) derived strictly from the text.
-        
-        Args:
-            context_text (str): The study material text.
-            
-        Returns:
-            dict: A dictionary containing the quiz questions.
+        Generates a quiz (Multiple Choice, True/False, and Short Answer) derived strictly from the document.
         """
         prompt = f"""
-You are an expert educator. Create a comprehensive quiz based strictly on the following text.
+You are an expert educator. Create a comprehensive quiz based strictly on the provided document.
+CRITICAL INSTRUCTION: First, silently analyze the provided document and identify all the major core concepts and themes. 
+Second, you must generate a question for EVERY single core concept you identified so that the entire document is covered. 
+Third, to ensure variety, randomly alter the *angle* of the questions you generate for these core topics. For example, use a mix of real-world scenarios, edge-case analysis, direct definitions, and conceptual comparisons. Do not skip any major topic.
 Output the quiz strictly in JSON format.
 The JSON structure must exactly match this format:
 {{
@@ -100,11 +95,8 @@ The JSON structure must exactly match this format:
     }}
   ]
 }}
-
-Text:
-{context_text}
 """
-        result = self._generate_content_with_retry(prompt, is_json=True)
+        result = self._generate_content_with_retry([inline_pdf, prompt], is_json=True, temperature=0.5)
         
         if result:
             try:
@@ -114,18 +106,15 @@ Text:
                 return {"error": "Failed to parse quiz response"}
         return {"error": "Failed to generate quiz due to API error"}
 
-    def generate_flashcards(self, context_text: str) -> List[Dict[str, str]]:
+    def generate_flashcards(self, inline_pdf: dict) -> List[Dict[str, str]]:
         """
         Extracts key terms and definitions into a structured list of front/back flashcards.
-        
-        Args:
-            context_text (str): The study material text.
-            
-        Returns:
-            list[dict]: A list of flashcard dictionaries with 'front' and 'back' keys.
         """
         prompt = f"""
-You are an expert educator. Extract key terms and their definitions from the following text to create flashcards.
+You are an expert educator. Extract key terms and their definitions from the provided document to create flashcards.
+CRITICAL INSTRUCTION: First, silently analyze the provided document and identify all the major core concepts and themes. 
+Second, you must generate a flashcard for EVERY single core concept you identified so that the entire document is covered. 
+Third, to ensure variety, randomly alter the *angle* of the flashcards you generate for these core topics. For example, use a mix of real-world scenarios, edge-case analysis, direct definitions, and conceptual comparisons. Do not skip any major topic.
 Output strictly in JSON format as a list of objects.
 The JSON structure must exactly match this format:
 [
@@ -134,11 +123,8 @@ The JSON structure must exactly match this format:
     "back": "Clear, concise definition or explanation"
   }}
 ]
-
-Text:
-{context_text}
 """
-        result = self._generate_content_with_retry(prompt, is_json=True)
+        result = self._generate_content_with_retry([inline_pdf, prompt], is_json=True, temperature=0.5)
         
         if result:
             try:
@@ -151,24 +137,15 @@ Text:
                 return []
         return []
 
-    def generate_summary(self, context_text: str) -> str:
+    def generate_summary(self, inline_pdf: dict) -> str:
         """
-        Generates concise, bulleted revision notes from the text.
-        
-        Args:
-            context_text (str): The study material text.
-            
-        Returns:
-            str: The bulleted summary notes.
+        Generates concise, bulleted revision notes from the document.
         """
         prompt = f"""
-You are an expert educator. Please provide a concise, comprehensive summary of the following text in the form of bulleted revision notes.
+You are an expert educator. Please provide a concise, comprehensive summary of the provided document in the form of bulleted revision notes.
 Capture the main ideas, key arguments, and important facts.
-
-Text:
-{context_text}
 
 Revision Notes:"""
         
-        result = self._generate_content_with_retry(prompt)
+        result = self._generate_content_with_retry([inline_pdf, prompt], model=self.lite_model)
         return result if result else "Sorry, I encountered an error while trying to generate the summary."

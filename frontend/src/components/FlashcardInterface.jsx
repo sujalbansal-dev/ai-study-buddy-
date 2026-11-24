@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { BookOpen, Loader, AlertTriangle, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { BookOpen, Loader, AlertTriangle, ChevronLeft, ChevronRight, RotateCcw, RefreshCw } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
-const FlashcardInterface = ({ documentId }) => {
+const FlashcardInterface = ({ documentId, onReset }) => {
   const [flashcards, setFlashcards] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -13,6 +16,19 @@ const FlashcardInterface = ({ documentId }) => {
     if (!documentId) {
       setError('Please upload a document first to generate flashcards.');
       return;
+    }
+
+    const cacheKey = `flashcards_${documentId}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        setFlashcards(JSON.parse(cached));
+        setCurrentIndex(0);
+        setIsFlipped(false);
+        return;
+      } catch (e) {
+        console.error("Invalid cache", e);
+      }
     }
 
     setIsLoading(true);
@@ -31,10 +47,15 @@ const FlashcardInterface = ({ documentId }) => {
         setError('No key terms found to generate flashcards.');
       } else {
         setFlashcards(cards);
+        localStorage.setItem(cacheKey, JSON.stringify(cards));
       }
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.detail || 'Failed to generate flashcards. Is the backend running?');
+      if (err.response?.status === 429) {
+        setError('The AI is taking a breather to prevent server overload! Please wait 60 seconds before generating the next item.');
+      } else {
+        setError(err.response?.data?.detail || 'Failed to generate flashcards. Is the backend running?');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -106,8 +127,18 @@ const FlashcardInterface = ({ documentId }) => {
           <BookOpen className="w-5 h-5 mr-2 text-blue-600" />
           Study Deck
         </h3>
-        <div className="text-sm font-medium text-slate-500 bg-white/80 px-3 py-1 rounded-full border border-slate-200">
-          Card {currentIndex + 1} of {flashcards.length}
+        <div className="flex items-center space-x-3">
+          <div className="text-sm font-medium text-slate-500 bg-white/80 px-3 py-1 rounded-full border border-slate-200">
+            Card {currentIndex + 1} of {flashcards.length}
+          </div>
+          <button 
+            onClick={onReset}
+            className="flex items-center space-x-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-all active:scale-95"
+            title="Reset Flashcards"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Reset Deck</span>
+          </button>
         </div>
       </div>
 
@@ -119,20 +150,20 @@ const FlashcardInterface = ({ documentId }) => {
             className={`w-full h-full cursor-pointer relative transition-transform duration-500 [transform-style:preserve-3d] ${isFlipped ? '[transform:rotateY(180deg)]' : ''}`}
           >
             {/* Front */}
-            <div className="absolute inset-0 bg-white backdrop-blur-md rounded-3xl shadow-sm border border-slate-200 flex flex-col items-center justify-center p-8 text-center [backface-visibility:hidden]">
+            <div className="absolute inset-0 bg-white backdrop-blur-md rounded-3xl shadow-sm border border-slate-200 flex flex-col items-center justify-center p-8 text-center [backface-visibility:hidden] overflow-y-auto">
               <span className="absolute top-4 left-6 text-xs font-bold text-slate-400 tracking-wider uppercase">Term</span>
-              <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-800 leading-tight">
-                {currentCard?.front}
-              </h2>
+              <div className="text-3xl sm:text-4xl font-extrabold text-slate-800 leading-tight prose prose-lg">
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{currentCard?.front || ''}</ReactMarkdown>
+              </div>
               <p className="absolute bottom-6 text-xs font-medium text-blue-500 animate-pulse">Click to flip</p>
             </div>
 
             {/* Back */}
-            <div className="absolute inset-0 bg-blue-600 backdrop-blur-md text-white rounded-3xl shadow-inner border border-blue-700 flex flex-col items-center justify-center p-8 text-center [backface-visibility:hidden] [transform:rotateY(180deg)]">
+            <div className="absolute inset-0 bg-blue-600 backdrop-blur-md text-white rounded-3xl shadow-inner border border-blue-700 flex flex-col items-center justify-center p-8 text-center [backface-visibility:hidden] [transform:rotateY(180deg)] overflow-y-auto">
               <span className="absolute top-4 left-6 text-xs font-bold text-blue-300 tracking-wider uppercase">Definition</span>
-              <p className="text-lg sm:text-xl font-medium leading-relaxed">
-                {currentCard?.back}
-              </p>
+              <div className="text-lg sm:text-xl font-medium leading-relaxed prose prose-invert prose-p:leading-relaxed">
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{currentCard?.back || ''}</ReactMarkdown>
+              </div>
               <p className="absolute bottom-6 text-xs font-medium text-blue-200">Click to flip back</p>
             </div>
           </div>

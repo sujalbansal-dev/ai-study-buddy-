@@ -6,3 +6,36 @@ env/
 node_modules/
 dist/
 .DS_Store
+
+# C++ / CMake build outputs
+build/
+backend-cpp/build/
+bin/
+out/
+cmake-build-*/
+.cache/
+compile_commands.json
+CMakeUserPresets.json
+
+# Compiler & Linker outputs
+*.obj
+*.o
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.pdb
+*.ilk
+
+# Visual Studio / MSVC artifacts
+.vs/
+.vscode/
+*.vcxproj.user
+*.suo
+*.user
+x64/
+x86/
+Debug/
+Release/
