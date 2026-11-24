@@ -99,7 +99,7 @@ async def ask_question(request: AskRequest):
         }
     except Exception as e:
         if "429" in str(e):
-            raise HTTPException(status_code=429, detail="API rate limit reached.")
+            raise HTTPException(status_code=429, detail="API rate limit reached. Please wait a moment before trying again.")
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
 @router.post("/generate/quiz", status_code=status.HTTP_200_OK)
@@ -121,7 +121,7 @@ async def generate_quiz_endpoint(request: QuizRequest):
         raise
     except Exception as e:
         if "429" in str(e):
-            raise HTTPException(status_code=429, detail="API rate limit reached.")
+            raise HTTPException(status_code=429, detail="API rate limit reached. Please wait a moment before trying again.")
         raise HTTPException(status_code=500, detail=f"An error occurred while generating the quiz: {str(e)}")
 
 @router.post("/generate/flashcards", status_code=status.HTTP_200_OK)
@@ -143,7 +143,7 @@ async def generate_flashcards_endpoint(request: FlashcardRequest):
         raise
     except Exception as e:
         if "429" in str(e):
-            raise HTTPException(status_code=429, detail="API rate limit reached.")
+            raise HTTPException(status_code=429, detail="API rate limit reached. Please wait a moment before trying again.")
         raise HTTPException(status_code=500, detail=f"An error occurred while generating flashcards: {str(e)}")
 
 @router.post("/generate/summary", status_code=status.HTTP_200_OK)
@@ -165,7 +165,7 @@ async def generate_summary_endpoint(request: SummaryRequest):
         raise
     except Exception as e:
         if "429" in str(e):
-            raise HTTPException(status_code=429, detail="API rate limit reached.")
+            raise HTTPException(status_code=429, detail="API rate limit reached. Please wait a moment before trying again.")
         raise HTTPException(status_code=500, detail=f"An error occurred while generating the summary: {str(e)}")
 
 @router.post("/reset", status_code=status.HTTP_200_OK)

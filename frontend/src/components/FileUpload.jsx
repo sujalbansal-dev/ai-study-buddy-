@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import { UploadCloud, File, CheckCircle, AlertCircle, Loader } from 'lucide-react';
 
 const FileUpload = ({ onUploadSuccess }) => {
@@ -53,7 +55,7 @@ const FileUpload = ({ onUploadSuccess }) => {
     formData.append('file', file);
 
     try {
-      const response = await axios.post('http://localhost:8000/upload', formData, {
+      const response = await axios.post(`${API_URL}/upload`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }

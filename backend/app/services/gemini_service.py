@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import random
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 
@@ -7,44 +9,100 @@ class StudyBuddyAI:
     def __init__(self, api_key: Optional[str] = None):
         """
         Initializes the StudyBuddyAI service with the Gemini API.
+        Loads GEMINI_API_KEY strictly from environment variables and configures high-RPM models.
         """
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not set in environment variables.")
             
         genai.configure(api_key=self.api_key)
         
-        # Using gemini-2.5-flash for complex tasks
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
-        # Using flash-lite for simple text generation to save tokens and use higher rate limits
-        self.lite_model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        # Default to gemini-3.1-flash-lite (or gemini-3.5-flash-lite) to maximize free-tier RPM/RPD limits
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+        self.lite_model_name = os.getenv("GEMINI_LITE_MODEL", self.model_name)
         
-    def _generate_content_with_retry(self, contents: list, is_json: bool = False, temperature: float = None, model: Optional[Any] = None) -> Optional[str]:
-        """Helper method to handle API calls with basic error catching."""
+        self.model = genai.GenerativeModel(self.model_name)
+        self.lite_model = genai.GenerativeModel(self.lite_model_name)
+        
+    def _generate_content_with_retry(
+        self,
+        contents: list,
+        is_json: bool = False,
+        temperature: Optional[float] = None,
+        model: Optional[Any] = None,
+        max_retries: int = 5,
+        base_delay: float = 2.0
+    ) -> Optional[str]:
+        """
+        Helper method to handle API calls with graceful exponential backoff retry logic
+        for 429 RESOURCE_EXHAUSTED / rate limit errors.
+        """
         target_model = model if model else self.model
-        try:
-            generation_config = {}
-            if is_json:
-                generation_config["response_mime_type"] = "application/json"
-            if temperature is not None:
-                generation_config["temperature"] = temperature
-                
-            if not generation_config:
-                generation_config = None
+        generation_config = {}
+        if is_json:
+            generation_config["response_mime_type"] = "application/json"
+        if temperature is not None:
+            generation_config["temperature"] = temperature
             
-            response = target_model.generate_content(
-                contents,
-                generation_config=generation_config
-            )
-            return response.text
-        except Exception as e:
-            error_str = str(e).lower()
-            if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                raise Exception("429: API rate limit reached.")
+        if not generation_config:
+            generation_config = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = target_model.generate_content(
+                    contents,
+                    generation_config=generation_config
+                )
+                return response.text
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = (
+                    "429" in error_str
+                    or "resource_exhausted" in error_str
+                    or "quota" in error_str
+                    or "rate limit" in error_str
+                    or "exhausted" in error_str
+                )
                 
-            # Catching other API errors such as timeouts or network issues
-            print(f"Error communicating with Gemini API: {type(e).__name__} - {e}")
-            return None
+                if is_rate_limit and attempt < max_retries:
+                    # Exponential backoff: base_delay * 2^attempt + jitter
+                    delay = (base_delay * (2 ** attempt)) + random.uniform(0.5, 1.5)
+                    print(
+                        f"[Gemini Rate Limit] 429 RESOURCE_EXHAUSTED detected. "
+                        f"Retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})..."
+                    )
+                    time.sleep(delay)
+                    continue
+                elif is_rate_limit:
+                    print(f"[Gemini Rate Limit] Max retries ({max_retries}) exceeded for 429 RESOURCE_EXHAUSTED.")
+                    raise Exception("429: API rate limit reached after retries. Please wait a moment before trying again.")
+                else:
+                    # Log other API errors such as network timeouts
+                    print(f"Error communicating with Gemini API: {type(e).__name__} - {e}")
+                    return None
+
+    def get_embedding(self, text: str, model: str = "models/text-embedding-004") -> List[float]:
+        """
+        Generates text embeddings using the cloud Gemini Embedding API,
+        avoiding any heavy local ML dependencies (like PyTorch or sentence-transformers)
+        to keep RAM usage well under Render's 512 MB free tier.
+        """
+        for attempt in range(4):
+            try:
+                result = genai.embed_content(
+                    model=model,
+                    content=text,
+                    task_type="retrieval_document"
+                )
+                return result.get("embedding", [])
+            except Exception as e:
+                error_str = str(e).lower()
+                if ("429" in error_str or "resource_exhausted" in error_str) and attempt < 3:
+                    time.sleep(2 * (2 ** attempt))
+                    continue
+                print(f"Error generating embedding with Gemini API: {e}")
+                return []
+        return []
 
     def generate_rag_answer(self, question: str, inline_pdf: dict) -> str:
         """

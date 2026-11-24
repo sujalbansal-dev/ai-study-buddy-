@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import { BookOpen, Loader, AlertTriangle, ChevronLeft, ChevronRight, RotateCcw, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -38,7 +40,7 @@ const FlashcardInterface = ({ documentId, onReset }) => {
     setIsFlipped(false);
 
     try {
-      const response = await axios.post('http://localhost:8000/generate/flashcards', {
+      const response = await axios.post(`${API_URL}/generate/flashcards`, {
         document_id: documentId
       });
 

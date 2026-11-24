@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import { BrainCircuit, Loader, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import Confetti from 'react-confetti';
 import ReactMarkdown from 'react-markdown';
@@ -40,7 +42,7 @@ const QuizInterface = ({ documentId, onReset }) => {
     setScore(null);
 
     try {
-      const response = await axios.post('http://localhost:8000/generate/quiz', {
+      const response = await axios.post(`${API_URL}/generate/quiz`, {
         document_id: documentId
       });
 

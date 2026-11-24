@@ -1,8 +1,25 @@
+# Environment variables
 .env
+.env.*
+*.env
+backend/.env
+frontend/.env
+frontend/.env.local
+.env*.local
+
+# Keep example files tracked
+!.env.example
+!backend/.env.example
+!frontend/.env.example
+
+# Python
 __pycache__/
+*.pyc
 venv/
 env/
 *.sqlite3
+
+# Node / Frontend
 node_modules/
 dist/
 .DS_Store

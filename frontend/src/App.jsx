@@ -9,6 +9,8 @@ import { BookOpen, Sparkles, RefreshCw } from 'lucide-react';
 import axios from 'axios';
 import 'katex/dist/katex.min.css';
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 function App() {
   const [documentId, setDocumentId] = useState(null);
   const [activeTab, setActiveTab] = useState('chat');
@@ -30,7 +32,7 @@ function App() {
       localStorage.removeItem(`quiz_${documentId}`);
       localStorage.removeItem(`flashcards_${documentId}`);
       try {
-        await axios.post('http://localhost:8000/reset', { document_id: documentId });
+        await axios.post(`${API_URL}/reset`, { document_id: documentId });
       } catch (err) {
         console.error("Failed to reset on backend", err);
       }

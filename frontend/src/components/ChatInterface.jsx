@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -39,7 +41,7 @@ const ChatInterface = ({ documentId, onReset }) => {
     }
 
     try {
-      const response = await axios.post('http://localhost:8000/ask', {
+      const response = await axios.post(`${API_URL}/ask`, {
         document_id: documentId,
         question: userMessage.text
       });

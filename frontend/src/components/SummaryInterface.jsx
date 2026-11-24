@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -28,7 +30,7 @@ const SummaryInterface = ({ documentId, onReset }) => {
     setSummary('');
 
     try {
-      const response = await axios.post('http://localhost:8000/generate/summary', {
+      const response = await axios.post(`${API_URL}/generate/summary`, {
         document_id: documentId
       });
 
